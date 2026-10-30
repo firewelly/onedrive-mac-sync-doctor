@@ -155,6 +155,7 @@ into five kinds. Distribution of the 346 records above:
 | **`__MACOSX/`** | 25 files | zip-extraction leftovers | delete the directory |
 | **build-artifact** | 4 | `ephemeral/`, `.dart_tool/`, `.lock` | delete; regenerated |
 | **stubborn** | 2 | file is present and readable, yet the replace never lands | recreate the file |
+| **pending** | — | just created or modified, queued for upload (change type 2/5/260) | nothing, wait |
 | *system* | 1 | OneDrive's own `temp` record | ignore |
 
 ### Ghost records
@@ -446,7 +447,8 @@ python3 od_backup_list.py Personal --out /Volumes/Backup/od-personal
 |---|---|
 | `od.py` | Shared library: account discovery, mount resolution, path reconstruction |
 | `od_state.py` | Snapshot of version, processes, counters and integrity |
-| `od_audit.py` | Classify every stuck record into the five kinds |
+| `od_audit.py` | Classify every stuck record into the five kinds (plus `pending` for in-flight) |
+| `summary.py` | One-screen health verdict per account |
 | `od_tombstone.py` | Bottom-up tombstone of a ghost subtree |
 | `od_fix_records.py` | Delete change records that can never complete |
 | `od_backup_list.py` | Export local-only files as a list for `tar` |

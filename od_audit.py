@@ -29,7 +29,18 @@ BUILD_MARKERS = (
 )
 
 
-def classify(index, itemid, pending_type):
+def classify(index, itemid, pending_type, change_types=None):
+    """Sort one record into a bucket.
+
+    change_types is the set of change_type values queued for this item. It is
+    what separates "stuck" from "in flight":
+
+        type 4 (LC_REPLACE_FILE) that never completes -> stubborn
+        type 2/5/260 (create, metadata, upload)       -> pending, healthy
+
+    A freshly created file legitimately sits at ph_insync=0 until it uploads,
+    so labelling it stubborn would cry wolf.
+    """
     name = od.leaf(index.name.get(itemid, ""))
     if itemid == od.TEMP_ITEMID:
         return "system", None
@@ -47,16 +58,20 @@ def classify(index, itemid, pending_type):
     rel = index.rel(itemid)
     if any(marker in f"/{rel}" for marker in BUILD_MARKERS):
         return "build-artifact", rel
+    types = change_types or set()
+    if types and 4 not in types:
+        return "pending", rel
     return "stubborn", rel
 
 
-def audit(account, details=False):
+def audit(account, details=False, quiet=False):
     db = od.db_path(account)
     mount = od.mount_path(account)
     if not os.path.exists(db):
-        print(f"[{account}] no database at {db}")
-        return
-    if not mount:
+        if not quiet:
+            print(f"[{account}] no database at {db}")
+        return {}
+    if not mount and not quiet:
         print(f"[{account}] cannot find a mounted CloudStorage folder; "
               f"path resolution will show everything as ghost")
     con = od.connect_ro(db)
@@ -64,18 +79,25 @@ def audit(account, details=False):
     rows = con.execute(
         "SELECT itemid, itemtype FROM dbfs_mftrecord "
         "WHERE tombstoned=0 AND ph_insync=0").fetchall()
+    queued = {}
+    for itemid, ctype in con.execute(
+            "SELECT itemid, change_type FROM dbfs_changerecord"):
+        queued.setdefault(itemid, set()).add(ctype)
     con.close()
 
     total = len(rows)
     buckets = {}
     ghost_parents = {}
     for itemid, itemtype in rows:
-        kind, rel = classify(index, itemid, itemtype)
+        kind, rel = classify(index, itemid, itemtype, queued.get(itemid))
         buckets.setdefault(kind, []).append(rel)
         if kind == "ghost" and rel:
             parts = rel.split("/")
             key = "/".join(parts[:-1]) if len(parts) > 1 else "<mount root>"
             ghost_parents[key] = ghost_parents.get(key, 0) + 1
+
+    if quiet:
+        return {kind: len(items) for kind, items in buckets.items()}
 
     print(f"\n=== {account} ===")
     print(f"database : {db}")
@@ -104,6 +126,11 @@ def audit(account, details=False):
                 print(f"    ... and {len(items) - 40} more")
 
 
+def bucket_counts(account):
+    """Category counts only, nothing printed. Used by summary.py."""
+    return audit(account, quiet=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Audit OneDrive sync stall (read-only)")
     ap.add_argument("accounts", nargs="*", help="account names (default: all)")
@@ -116,6 +143,7 @@ def main():
     print("  symlink        -> delete the links/directories, they never sync")
     print("  build-artifact -> delete the directory, it gets regenerated")
     print("  stubborn       -> recreate the file (copy, remove, copy back)")
+    print("  pending        -> in flight, no action needed")
     print("  system         -> ignore")
 
 
